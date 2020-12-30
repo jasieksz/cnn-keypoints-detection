@@ -6,16 +6,11 @@ import numpy as np
 from numpy.lib.npyio import load
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib import image
-from typing import List, NoReturn
-import time
 
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow._api.v2 import data
 from tensorflow.keras import layers
 from tensorflow.keras.models import Sequential
-
+from tensorflow.keras.optimizers import SGD
 
 #%%[markdown]
 ### Configure GPU and CUDA
@@ -54,14 +49,23 @@ def loadTestData(path:str, labels:list, imgSize:tuple) -> tf.data.Dataset:
         batch_size=batch_size,
     )
 
-def plotObjectWithKeypoints(dataSet:tf.data.Dataset, number:int, imageSize:int) -> None:
+def loadImagesFromDir(basePath, imgSize:tuple):
+    imagePaths = [basePath + imageName for imageName in os.listdir(basePath)]
+    return [tf.keras.preprocessing.image.img_to_array(img) 
+            for img in [tf.keras.preprocessing.image.load_img(
+                    imagePath,
+                    color_mode='grayscale', 
+                    target_size=imgSize) for imagePath in imagePaths]]
+
+def plotObjectsWithKeypoints(slice:int, images:list, labels:list, yPred:np.ndarray) -> None:
     plt.figure(figsize=(15,15))
-    for images, labels in dataSet.take(1):
-        for i in range(number):
-            ax = plt.subplot(3, 3, i + 1)
-            plt.imshow(tf.keras.preprocessing.image.array_to_img(images[i]))
-            plt.scatter(labels[i][0::2]*imageSize, labels[i][1::2]*imageSize, marker='x', s=40, c='red')
-            plt.axis("off")
+    for i in range(9):
+        ax = plt.subplot(3, 3, i + 1)
+        plt.imshow(tf.keras.preprocessing.image.array_to_img(images[9*slice+i]), cmap='gray')
+        plt.scatter(yPred[9*slice+i][0::2]*imageH, yPred[9*slice+i][1::2]*imageH, marker='x', s=50, c='red')
+        plt.scatter(labels[9*slice+i][0::2]*imageH, labels[9*slice+i][1::2]*imageH, marker='x', s=50, c='green')
+        plt.axis("off")
+    plt.show()
 
 def plotTrainingHistory(history:tf.keras.callbacks.History, metric:str) -> None:
     loss = history.history[metric]
@@ -79,8 +83,8 @@ def plotTrainingHistory(history:tf.keras.callbacks.History, metric:str) -> None:
 #%%[markdown]
 ### Load datasets
 #
-imageH = 120
-imageW = 120
+imageH = 160
+imageW = 160
 numFeatures = 16
 
 dsTrain = loadData(path='resources/drill/train',
@@ -120,6 +124,7 @@ dsValid = dsValid.cache() \
 #%%[markdown]
 ### Create basic model
 #
+
 model = Sequential([
     layers.experimental.preprocessing.Rescaling(1./255, input_shape=(imageH, imageW, 1)),
     layers.Conv2D(16, 3, padding='same', activation='relu'),
@@ -144,7 +149,7 @@ model.summary()
 #%%[markdown]
 ### Train the model
 #
-epochs = 20
+epochs = 50
 history = model.fit(dsTrain,
                 validation_data=dsValid,
                 epochs=epochs)
@@ -152,26 +157,25 @@ history = model.fit(dsTrain,
 #%%[markdown]
 ### Inspect training accuracy
 #
+plotTrainingHistory(history, metric='loss')
 plotTrainingHistory(history, metric='accuracy')
 
-
 #%%[markdown]
-### Predict on test data and plot
-#
-y = model.predict(dsTest)
-
-plt.figure(figsize=(15,15))
-for (images, labels), predLabel in zip(dsTest.take(1), y):
-    for i in range(9):
-        ax = plt.subplot(3, 3, i + 1)
-        plt.imshow(tf.keras.preprocessing.image.array_to_img(images[i]), cmap='gray')
-        plt.scatter(predLabel[0::2]*120, predLabel[1::2]*120, marker='x', s=50, c='red')
-        plt.scatter(labels[i][0::2]*120, labels[i][1::2]*120, marker='x', s=50, c='green')
-        plt.axis("off")
-
-#%%[markdown]
-### Score model
+### Accuracy score model
 #
 test_loss, test_acc = model.evaluate(dsTest, verbose=2)
 
-# %%
+#%%[markdown]
+## Predict
+#
+yPred = model.predict(dsTest)
+images = loadImagesFromDir('resources/drill/test/masks/', (imageH, imageW))
+labels = list(np.load('resources/drill/drill_keypoints_test.npy').reshape(66,16))
+
+#%%[markdown]
+## Plot prediction results
+#
+plotObjectsWithKeypoints(slice=0, images=images, labels=labels, yPred=yPred)
+plotObjectsWithKeypoints(slice=3, images=images, labels=labels, yPred=yPred)
+
+
