@@ -8,16 +8,18 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
-from tensorflow.keras import layers
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.backend import flatten, sum
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dense, Dropout, UpSampling2D, Concatenate
+from tensorflow.keras.losses import binary_crossentropy
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.optimizers import SGD, Adam
 
 #%%[markdown]
 ### Run config
 #
 
 saveModel = False
-objectName = "duck"
+objectName = "drill"
 modelName = "model-{}-{}".format(objectName,31)
 
 #%%[markdown]
@@ -134,32 +136,70 @@ dsValid = dsValid.cache() \
 #%%[markdown]
 ### Create basic model
 #
-
-model = Sequential([
-    layers.experimental.preprocessing.Rescaling(1./255, input_shape=(imageH, imageW, 1)),
-    layers.Conv2D(64, 3, padding='same', activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Conv2D(128, 3, padding='same', activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Conv2D(128, 3, padding='same', activation='relu'),
-    layers.MaxPooling2D(),
-    layers.Dropout(0.2),
-    layers.Flatten(),
-    layers.Dense(128, activation='relu'),
-    layers.Dense(numFeatures)
-])
-
-model.compile(optimizer='adam',
-              loss='mean_squared_error',
-              metrics=['accuracy'])
+def dice_loss(y_true, y_pred):
+    smooth = 1.
+    y_true_f = flatten(y_true)
+    y_pred_f = flatten(y_pred)
+    intersection = sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (sum(y_true_f) + sum(y_pred_f) + smooth)
 
 
+def bce_dice_loss(y_true, y_pred):
+    return binary_crossentropy(y_true, y_pred) + (1 - dice_loss(y_true, y_pred))
+
+#%%
+inputs = Input((imageH, imageW))
+conv1 = Conv2D(32, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(inputs)
+conv1 = Conv2D(32, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv1)
+pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+conv2 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool1)
+conv2 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv2)
+pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+conv3 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool2)
+conv3 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv3)
+pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
+conv4 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool3)
+conv4 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv4)
+drop4 = Dropout(0.5)(conv4)
+pool4 = MaxPooling2D(pool_size=(2, 2))(drop4)
+
+conv5 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool4)
+conv5 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv5)
+drop5 = Dropout(0.5)(conv5)
+
+up6 = Conv2D(256, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(drop5))
+merge6 = Concatenate(3)([drop4,up6])
+conv6 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge6)
+conv6 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv6)
+
+up7 = Conv2D(256, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv6))
+merge7 = Concatenate(3)([conv3,up7])
+conv7 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge7)
+conv7 = Conv2D(256, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv7)
+
+up8 = Conv2D(128, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv7))
+merge8 = Concatenate(3)([conv2,up8])
+conv8 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge8)
+conv8 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv8)
+
+up9 = Conv2D(64, 2, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(UpSampling2D(size = (2,2))(conv8))
+merge9 = Concatenate(3)([conv1, up9])
+conv9 = Conv2D(48, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge9)
+conv9 = Conv2D(48, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
+conv9 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
+# conv10 = Conv2D(1, 1, activation = 'sigmoid')(conv9)
+conv10 = Dense(numFeatures)(conv9)
+
+model = Model(inputs = inputs, outputs = conv10)
+
+model.compile(optimizer = Adam(lr = 1e-3), loss=bce_dice_loss, metrics=[dice_loss, 'accuracy'])
 model.summary()
+
 
 #%%[markdown]
 ### Train the model
 #
-epochs = 250
+epochs = 10
 history = model.fit(dsTrain,
                 validation_data=dsValid,
                 epochs=epochs)
@@ -188,7 +228,7 @@ labels = list(np.load('resources/{}/{}_keypoints_test.npy'.format(objectName, ob
 ## Plot prediction results
 #
 plotObjectsWithKeypoints(slice=1, images=images, labels=labels, yPred=yPred)
-plotObjectsWithKeypoints(slice=5, images=images, labels=labels, yPred=yPred)
+plotObjectsWithKeypoints(slice=4, images=images, labels=labels, yPred=yPred)
 
 #%%[markdown]
 ## Save model
