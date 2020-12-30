@@ -1,0 +1,5 @@
+resources/
+draw_keypoints.py
+*_checkpoints/
+main.py
+model2.py
